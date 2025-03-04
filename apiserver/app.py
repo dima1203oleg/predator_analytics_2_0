@@ -17,7 +17,7 @@ app = Flask(__name__)
 
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://host.docker.internal:11434")
 OPENSEARCH_HOSTS = os.getenv("OPENSEARCH_HOSTS", "http://localhost:9200").split(",")
 
 redis_client = Redis(host=REDIS_HOST, port=6379, decode_responses=True)
@@ -47,6 +47,49 @@ RAG_PROMPT_TEMPLATE = """
 Відповідь:
 """
 prompt = PromptTemplate(template=RAG_PROMPT_TEMPLATE, input_variables=["context", "question"])
+
+@app.route('/api/models', methods=['GET'])
+def get_models():
+    """Повертає список доступних моделей з Ollama або резервний список у разі помилки"""
+    try:
+        ollama_tags_url = f"{OLLAMA_HOST}/api/tags"
+        response = requests.get(ollama_tags_url, timeout=5)  # Додано тайм-аут для уникнення зависань
+        if response.status_code == 200:
+            models = response.json().get("models", [])
+            # Форматуємо відповідь для Open WebUI
+            formatted_models = [{"id": model["name"], "name": model["name"]} for model in models]
+            return jsonify(formatted_models), 200
+        else:
+            # Якщо Ollama повернула помилку, повертаємо резервний список
+            fallback_models = [{"id": "mistral", "name": "Mistral Model"}]
+            return jsonify(fallback_models), 200
+    except requests.RequestException as e:
+        # У разі помилки мережі або недоступності Ollama повертаємо резервний список
+        fallback_models = [{"id": "mistral", "name": "Mistral Model"}]
+        return jsonify(fallback_models), 200
+    except Exception as e:
+        # У разі інших помилок повертаємо JSON з інформацією про помилку
+        return jsonify({"error": f"Помилка сервера: {str(e)}"}), 500
+
+@app.route('/api/version', methods=['GET'])
+def get_version():
+    """Повертає версію API"""
+    try:
+        return jsonify({"version": "1.0"}), 200  # Змінено на v1.0
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/tags', methods=['GET'])
+def get_tags():
+    """Повертає доступні теги (моделі)"""
+    try:
+        tags = [
+            {"id": "mistral", "name": "Mistral Model"},
+            {"id": "custom", "name": "Custom Analytics Model"}
+        ]
+        return jsonify(tags), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/process_query', methods=['POST'])
 def process_query():
