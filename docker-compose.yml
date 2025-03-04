@@ -52,11 +52,14 @@ services:
 
   loki:
     image: grafana/loki:2.8.2
+    user: "0:0"  # Run as root
     ports:
       - "3100:3100"
     volumes:
       - ./monitoring/loki-config.yml:/etc/loki/local-config.yaml
       - lokidata:/loki
+      - loki-wal:/wal
+      - loki-compactor:/loki/compactor  # Додано для compactor
 
   promtail:
     image: grafana/promtail:2.8.2
@@ -88,3 +91,5 @@ volumes:
   pgdata:
   osdata:
   lokidata:
+  loki-wal:
+  loki-compactor:  # Додано

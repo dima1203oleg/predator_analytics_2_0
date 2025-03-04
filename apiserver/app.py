@@ -4,7 +4,7 @@ import psycopg2
 import requests
 from flask import Flask, request, jsonify
 from langchain.embeddings import OllamaEmbeddings
-from langchain.vectorstores import OpenSearch
+from langchain.vectorstores.opensearch_vector_search import OpenSearchVectorSearch
 from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
 from langchain.document_loaders import (
@@ -29,11 +29,12 @@ db_conn = psycopg2.connect(
     host=POSTGRES_HOST
 )
 
-embeddings = OllamaEmbeddings(model="mistral", ollama_url=OLLAMA_HOST)
+embeddings = OllamaEmbeddings(model="mistral")
 
-vectorstore = OpenSearch(
+vectorstore = OpenSearchVectorSearch(
     index_name="predator_index",
     opensearch_url=OPENSEARCH_HOSTS[0],
+    embedding_function=embeddings,
     http_auth=("admin", "strong_password"),
     use_ssl=False
 )
