@@ -9,7 +9,7 @@
             "datasource": "Loki",
             "targets": [
                 {
-                    "expr": "count_over_time({container=~\".*\"}[$__interval])",
+                    "expr": "count_over_time({container=~\".+\"}[$__interval])",
                     "legendFormat": "{{container}}",
                     "refId": "A"
                 }
@@ -22,7 +22,7 @@
             "datasource": "Loki",
             "targets": [
                 {
-                    "expr": "count_over_time({container=~\".*\"} |= \"ERROR\" [$__interval])",
+                    "expr": "count_over_time({container=~\".+\"} |= \"ERROR\" [$__interval])",
                     "legendFormat": "{{container}}",
                     "refId": "B"
                 }
@@ -35,7 +35,7 @@
             "datasource": "Loki",
             "targets": [
                 {
-                    "expr": "rate({container=~\".*\"}[$__rate_interval])",
+                    "expr": "sum by (container) (count_over_time({container=~\".+\"}[$__interval]))",
                     "legendFormat": "{{container}}",
                     "refId": "C"
                 }
@@ -126,7 +126,7 @@
             "datasource": "Prometheus",
             "targets": [
                 {
-                    "expr": "rate(container_cpu_usage_seconds_total{container_label_com_docker_compose_service=~\".*\"}[5m])",
+                    "expr": "rate(container_cpu_usage_seconds_total{container_label_com_docker_compose_service=~\".+\"}[5m])",
                     "legendFormat": "{{container_label_com_docker_compose_service}}",
                     "refId": "A"
                 }

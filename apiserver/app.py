@@ -48,36 +48,32 @@ RAG_PROMPT_TEMPLATE = """
 """
 prompt = PromptTemplate(template=RAG_PROMPT_TEMPLATE, input_variables=["context", "question"])
 
+@app.route('/api/version', methods=['GET'])
+def get_version():
+    """Повертає версію API"""
+    try:
+        return jsonify({"version": "1.0"}), 200  # Версія API встановлена на 1.0
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/models', methods=['GET'])
 def get_models():
     """Повертає список доступних моделей з Ollama або резервний список у разі помилки"""
     try:
         ollama_tags_url = f"{OLLAMA_HOST}/api/tags"
-        response = requests.get(ollama_tags_url, timeout=5)  # Додано тайм-аут для уникнення зависань
+        response = requests.get(ollama_tags_url, timeout=5)
         if response.status_code == 200:
             models = response.json().get("models", [])
-            # Форматуємо відповідь для Open WebUI
             formatted_models = [{"id": model["name"], "name": model["name"]} for model in models]
             return jsonify(formatted_models), 200
         else:
-            # Якщо Ollama повернула помилку, повертаємо резервний список
             fallback_models = [{"id": "mistral", "name": "Mistral Model"}]
             return jsonify(fallback_models), 200
     except requests.RequestException as e:
-        # У разі помилки мережі або недоступності Ollama повертаємо резервний список
         fallback_models = [{"id": "mistral", "name": "Mistral Model"}]
         return jsonify(fallback_models), 200
     except Exception as e:
-        # У разі інших помилок повертаємо JSON з інформацією про помилку
         return jsonify({"error": f"Помилка сервера: {str(e)}"}), 500
-
-@app.route('/api/version', methods=['GET'])
-def get_version():
-    """Повертає версію API"""
-    try:
-        return jsonify({"version": "1.0"}), 200  # Змінено на v1.0
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/tags', methods=['GET'])
 def get_tags():
@@ -170,6 +166,3 @@ def log_query(query, answer):
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({"status": "ok"})
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001)

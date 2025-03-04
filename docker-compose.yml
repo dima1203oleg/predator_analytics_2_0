@@ -1,3 +1,4 @@
+version: '3.8'
 
 services:
   apiserver:
@@ -16,6 +17,11 @@ services:
     volumes:
       - ./data:/app/data
       - ./ingestion:/app/ingestion
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
 
   postgres:
     image: postgres:15
@@ -58,7 +64,7 @@ services:
       - ./monitoring/loki-config.yml:/etc/loki/local-config.yaml
       - lokidata:/loki
       - loki-wal:/wal
-      - loki-compactor:/loki/compactor  # Додано для compactor
+      - loki-compactor:/loki/compactor
 
   promtail:
     image: grafana/promtail:2.8.2
@@ -68,7 +74,7 @@ services:
     command: -config.file=/etc/promtail/config.yml
 
   grafana:
-    image: grafana/grafana:10.1.2
+    image: grafana/grafana:10.1.2  # Оновлено до стабільної версії
     ports:
       - "3002:3000"
     environment:
@@ -86,9 +92,26 @@ services:
     depends_on:
       - apiserver
 
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.47.0
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    ports:
+      - "8080:8080"
+
 volumes:
   pgdata:
   osdata:
   lokidata:
   loki-wal:
-  loki-compactor:  # Додано
+  loki-compactor:
