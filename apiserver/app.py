@@ -20,7 +20,7 @@ from redis import Redis
 from tenacity import retry, stop_after_attempt, wait_exponential
 import asyncpg
 import logging
-import pandas as pd
+from openpyxl import load_workbook  # Додаємо openpyxl для обробки великих Excel-файлів
 
 # Налаштування логування
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -105,14 +105,14 @@ def get_tags():
     tags = [
         {
             "name": "mistral:latest",
-            "model": "mistral:latest",  # Додаємо для сумісності з openwebui
+            "model": "mistral:latest",
             "modified_at": "2025-03-05T20:00:00Z",
             "size": 0,
             "digest": "sha256:placeholder"
         },
         {
             "name": "custom:latest",
-            "model": "custom:latest",  # Додаємо для сумісності з openwebui
+            "model": "custom:latest",
             "modified_at": "2025-03-05T20:00:00Z",
             "size": 0,
             "digest": "sha256:placeholder"
@@ -268,36 +268,82 @@ async def upload_document():
 def convert_excel_to_csv_from_data():
     try:
         data = request.json
+        logger.info(f"Received request: {data}")
         if not data or "file_name" not in data:
+            logger.error("File name is required")
             return jsonify({"error": "File name is required"}), 400
 
         file_name = data["file_name"]
         input_path = f"/data/{file_name}"
+        logger.info(f"Checking file: {input_path}")
         if not os.path.exists(input_path):
+            logger.error(f"File not found: {input_path}")
             return jsonify({"error": f"File {input_path} not found"}), 404
         if not input_path.endswith((".xls", ".xlsx")):
+            logger.error(f"Unsupported file format: {input_path}")
             return jsonify({"error": "Only .xls or .xlsx files are supported"}), 400
 
         output_path = f"/data/{os.path.splitext(file_name)[0]}.csv"
+        logger.info(f"Converting {input_path} to {output_path}")
 
-        xl = pd.ExcelFile(input_path)
-        sheet_name = xl.sheet_names[0]
-        df_sample = pd.read_excel(input_path, sheet_name=sheet_name, nrows=1)
-        fieldnames = df_sample.columns.tolist()
+        # Очікувані заголовки
+        expected_headers = [
+            "Час оформлення", "Назва ПМО", "Тип", "Номер МД", "Дата", "Відправник", "ЕДРПОУ", "Одержувач", "№",
+            "Код товару", "Опис товару", "Кр.торг.", "Кр.відпр.", "Кр.пох.", "Умови пост.", "Місце пост", "К-ть",
+            "Один.вим.", "Брутто, кг.", "Нетто, кг.", "Вага по МД", "ФВ вал.контр", "Особ.перем.", "43", "43_01",
+            "РФВ Дол/кг.", "Вага.один.", "Вага різн.", "Контракт", "3001", "3002", "9610", "Торг.марк.",
+            "РМВ Нетто Дол/кг.", "РМВ Дол/дод.од.", "РМВ Брутто Дол/кг", "Призн.Зед", "Мін.База Дол/кг.",
+            "Різн.мін.база", "КЗ Нетто Дол/кг.", "КЗ Дол/шт.", "Різн.КЗ Дол/кг", "Різ.КЗ Дол/шт",
+            "КЗ Брутто Дол/кг.", "Різ.КЗ Брутто", "пільгова", "повна"
+        ]
+
+        wb = load_workbook(input_path, read_only=True)
+        sheet = wb[wb.sheetnames[0]]
 
         with open(output_path, 'w', encoding='utf-8', newline='') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-
-            chunk_size = 10000
+            writer = csv.writer(csvfile)
             row_count = 0
-            for chunk in pd.read_excel(input_path, sheet_name=sheet_name, chunksize=chunk_size):
-                for _, row in chunk.iterrows():
-                    writer.writerow(row.to_dict())
-                    row_count += 1
-                logger.info(f"Processed {row_count} rows")
 
-        logger.info(f"Total rows converted: {row_count}")
+            # Обробка заголовків
+            first_row = next(sheet.rows)
+            headers = [cell.value for cell in first_row if cell.value is not None]
+            headers = list(dict.fromkeys(headers))  # Видалення дублікатів зі збереженням порядку
+
+            if not headers or len(headers) != len(expected_headers):
+                logger.warning(f"Invalid or duplicate headers detected, using expected headers")
+                writer.writerow(expected_headers)
+            else:
+                writer.writerow(headers)
+
+            # Обробка даних
+            seen_rows = set()
+            first_data_row = True
+
+            for row in sheet.rows:
+                row_data = [cell.value for cell in row if cell.value is not None]
+                
+                # Пропуск порожніх рядків
+                if not row_data or all(v is None for v in row_data):
+                    continue
+
+                # Перевірка на дублікати
+                row_tuple = tuple(row_data)
+                if row_tuple not in seen_rows:
+                    if first_data_row and headers == expected_headers:
+                        first_data_row = False
+                        continue
+
+                    writer.writerow(row_data)
+                    seen_rows.add(row_tuple)
+                    row_count += 1
+                    
+                    if row_count % 10000 == 0:
+                        logger.info(f"Processed {row_count} unique rows")
+                else:
+                    logger.debug(f"Skipped duplicate row")
+
+        wb.close()
+        logger.info(f"Total unique rows converted: {row_count}")
 
         return send_file(
             output_path,
