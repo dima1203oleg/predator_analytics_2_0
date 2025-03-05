@@ -1,7 +1,8 @@
 import os
 import json
+import sys
 import psycopg2
-from elasticsearch import Elasticsearch, helpers
+from opensearchpy import OpenSearch, helpers
 from psutil import cpu_count
 import multiprocessing
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -16,7 +17,7 @@ PG_CONFIG = {
 
 OPENSEARCH_HOST = os.getenv("OPENSEARCH_HOSTS", "http://localhost:9200")
 INDEX_NAME = "customs_data"
-os_client = Elasticsearch([OPENSEARCH_HOST], request_timeout=60)
+os_client = OpenSearch([OPENSEARCH_HOST], http_auth=("admin", "strong_password"), use_ssl=False)
 
 @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=4, max=10))
 def insert_to_postgres(data_batch):
@@ -64,9 +65,11 @@ def process_batch(batch):
     insert_to_opensearch(batch)
     print(f"Оброблено {len(batch)} записів")
 
-def load_data_from_json(json_path, batch_size=5000, num_workers=None):
+def load_data_from_json(json_path, batch_size=1000, num_workers=None):
+    print(f"Спроба відкрити файл: {json_path}")
     num_workers = num_workers or cpu_count(logical=False)
     with open(json_path, "r", encoding="utf-8") as file:
+        print(f"Файл {json_path} відкрито успішно")
         data = json.load(file)
     pool = multiprocessing.Pool(num_workers)
     for i in range(0, len(data), batch_size):
@@ -77,4 +80,5 @@ def load_data_from_json(json_path, batch_size=5000, num_workers=None):
     print("Завантаження завершено")
 
 if __name__ == "__main__":
-    load_data_from_json("customs_data.json", batch_size=5000, num_workers=8)
+    json_path = sys.argv[1] if len(sys.argv) > 1 else "customs_data.json"
+    load_data_from_json(json_path, batch_size=5000, num_workers=8)

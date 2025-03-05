@@ -1,6 +1,7 @@
 import os
 import json
 import requests
+import sys
 from flask import Flask, request, jsonify
 from langchain.embeddings import OllamaEmbeddings
 from langchain.vectorstores.opensearch_vector_search import OpenSearchVectorSearch
@@ -15,6 +16,8 @@ from redis import Redis
 from tenacity import retry, stop_after_attempt, wait_exponential
 import asyncpg
 
+print("Starting apiserver...", file=sys.stderr)
+
 app = Flask(__name__)
 
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
@@ -22,21 +25,14 @@ POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://host.docker.internal:11434")
 OPENSEARCH_HOSTS = os.getenv("OPENSEARCH_HOSTS", "http://localhost:9200").split(",")
 
+print(f"Connecting to Redis: {REDIS_HOST}", file=sys.stderr)
 redis_client = Redis(host=REDIS_HOST, port=6379, decode_responses=True)
 
-@retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=4, max=10))
-async def get_db_pool():
-    return await asyncpg.create_pool(
-        database="predator_db",
-        user="predator",
-        password="strong_password",
-        host=POSTGRES_HOST,
-        command_timeout=10
-    )
-
+print(f"Initializing embeddings with Ollama: {OLLAMA_HOST}", file=sys.stderr)
 embeddings = OllamaEmbeddings(model="mistral", base_url=OLLAMA_HOST)
 llm = Ollama(model="mistral", base_url=OLLAMA_HOST)
 
+print(f"Connecting to OpenSearch: {OPENSEARCH_HOSTS[0]}", file=sys.stderr)
 vectorstore = OpenSearchVectorSearch(
     index_name="predator_index",
     opensearch_url=OPENSEARCH_HOSTS[0],
@@ -55,9 +51,20 @@ RAG_PROMPT_TEMPLATE = """
 """
 prompt = PromptTemplate(template=RAG_PROMPT_TEMPLATE, input_variables=["context", "question"])
 
+@retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=4, max=10))
+async def get_db_pool():
+    print(f"Connecting to PostgreSQL: {POSTGRES_HOST}", file=sys.stderr)
+    return await asyncpg.create_pool(
+        database="predator_db",
+        user="predator",
+        password="strong_password",
+        host=POSTGRES_HOST,
+        command_timeout=10
+    )
+
 @app.route('/api/version', methods=['GET'])
 def get_version():
-    return jsonify({"version": "1.0"}), 200
+    return jsonify({"version": "1.0"}), 200  # Залишено стандартну версію API
 
 @app.route('/api/models', methods=['GET'])
 def get_models():
@@ -68,7 +75,8 @@ def get_models():
             models = response.json().get("models", [])
             return jsonify([{"id": m["name"], "name": m["name"]} for m in models]), 200
         return jsonify([{"id": "mistral", "name": "Mistral Model"}]), 200
-    except Exception:
+    except Exception as e:
+        print(f"Error fetching models from Ollama: {e}", file=sys.stderr)
         return jsonify([{"id": "mistral", "name": "Mistral Model"}]), 200
 
 @app.route('/api/tags', methods=['GET'])
@@ -114,6 +122,7 @@ async def process_query():
         await log_query(query, final_response["answer"])
         return jsonify({"source": "rag", "response": final_response})
     except Exception as e:
+        print(f"Error in process_query: {e}", file=sys.stderr)
         return jsonify({"error": str(e)}), 500
 
 @app.route('/upload_document', methods=['POST'])
@@ -143,6 +152,7 @@ async def upload_document():
 
         return jsonify({"status": "ok", "message": f"Файл {filename} успішно оброблено."})
     except Exception as e:
+        print(f"Error in upload_document: {e}", file=sys.stderr)
         return jsonify({"error": str(e)}), 500
 
 async def log_query(query, answer):
@@ -153,3 +163,7 @@ async def log_query(query, answer):
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({"status": "ok"})
+
+if __name__ == "__main__":
+    print("Running Flask app...", file=sys.stderr)
+    app.run(host="0.0.0.0", port=5001, debug=True)

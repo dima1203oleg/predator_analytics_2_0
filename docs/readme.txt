@@ -281,9 +281,13 @@ To completely clean up all containers, images, volumes and orphaned containers:
 
 ---
 
+docker-compose down --rmi all -v --remove-orphans
+docker system prune -a --volumes
 ### Примітки
 - Якщо `customs_data.json` великий (декілька мільйонів записів), імпорт може зайняти час. Слідкуйте за виводом у терміналі.
 - У разі помилок перевірте логи контейнерів (`docker-compose logs <service_name>`).
 - Для коректної роботи Ollama переконайтеся, що сервер Ollama доступний за адресою, вказаною в `OLLAMA_HOST`.
-
+docker-compose down
+docker-compose build --no-cache
+docker-compose up -d
 Готово! Система розгорнута, а дані залиті в бази. Ви можете почати використовувати Open WebUI для запитів до API-сервера.
