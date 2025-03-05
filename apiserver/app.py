@@ -7,7 +7,7 @@ import csv
 import io
 from flask import Flask, request, jsonify, send_file
 from langchain_community.embeddings import OllamaEmbeddings
-from langchain_community.vectorstores import OpenSearchVectorSearch  # Оновлено на langchain_community
+from langchain_community.vectorstores import OpenSearchVectorSearch
 from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
 from langchain_community.document_loaders import (
@@ -103,8 +103,18 @@ def get_models():
 @app.route('/api/tags', methods=['GET'])
 def get_tags():
     tags = [
-        {"name": "mistral", "model": "Mistral Model"},
-        {"name": "custom", "model": "Custom Analytics Model"}
+        {
+            "name": "mistral:latest",
+            "modified_at": "2025-03-05T20:00:00Z",
+            "size": 0,
+            "digest": "sha256:placeholder"
+        },
+        {
+            "name": "custom:latest",
+            "modified_at": "2025-03-05T20:00:00Z",
+            "size": 0,
+            "digest": "sha256:placeholder"
+        }
     ]
     return jsonify({"models": tags}), 200
 
@@ -164,6 +174,7 @@ async def chat():
             return jsonify({"error": "Messages must be a non-empty list"}), 400
 
         query = data["messages"][-1].get("content", "")
+        model = data.get("model", "mistral").split(":")[0]  # Видаляємо :latest або інші теги
         limit = int(data.get("limit", 5))
         offset = int(data.get("offset", 0))
         if not query:
@@ -197,7 +208,7 @@ async def chat():
         response = qa_chain({"query": query, "context": truncated_context})
 
         chat_response = {
-            "model": "mistral",
+            "model": model,
             "messages": data["messages"],
             "response": response["result"],
             "stream": False,
@@ -264,17 +275,16 @@ def convert_excel_to_csv_from_data():
             return jsonify({"error": "File name is required"}), 400
 
         file_name = data["file_name"]
-        input_path = f"/data/{file_name}"  # Файл у /data, наприклад, /data/customs_data.xlsx
+        input_path = f"/data/{file_name}"
         if not os.path.exists(input_path):
             return jsonify({"error": f"File {input_path} not found"}), 404
         if not input_path.endswith((".xls", ".xlsx")):
             return jsonify({"error": "Only .xls or .xlsx files are supported"}), 400
 
-        output_path = f"/data/{os.path.splitext(file_name)[0]}.csv"  # Зберігання в /data
+        output_path = f"/data/{os.path.splitext(file_name)[0]}.csv"
 
-        # Потокове читання Excel і запис у CSV
         xl = pd.ExcelFile(input_path)
-        sheet_name = xl.sheet_names[0]  # Перший аркуш
+        sheet_name = xl.sheet_names[0]
         df_sample = pd.read_excel(input_path, sheet_name=sheet_name, nrows=1)
         fieldnames = df_sample.columns.tolist()
 
@@ -282,7 +292,7 @@ def convert_excel_to_csv_from_data():
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
 
-            chunk_size = 10000  # Обробка по 10,000 рядків
+            chunk_size = 10000
             row_count = 0
             for chunk in pd.read_excel(input_path, sheet_name=sheet_name, chunksize=chunk_size):
                 for _, row in chunk.iterrows():
@@ -292,14 +302,12 @@ def convert_excel_to_csv_from_data():
 
         logger.info(f"Total rows converted: {row_count}")
 
-        # Повернення файлу
         return send_file(
             output_path,
             mimetype='text/csv',
             as_attachment=True,
             download_name=f"{os.path.splitext(file_name)[0]}.csv"
         )
-
     except Exception as e:
         logger.error(f"Error in convert_excel_to_csv_from_data: {e}\n{traceback.format_exc()}")
         return jsonify({"error": str(e)}), 500
