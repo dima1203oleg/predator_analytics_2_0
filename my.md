@@ -1,0 +1,1 @@
+docker cp ./requirements.txt predator_analytics_2_0-apiserver-1:/app/requirements.txt

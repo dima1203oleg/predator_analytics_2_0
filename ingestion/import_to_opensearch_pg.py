@@ -8,6 +8,7 @@ import multiprocessing
 import ijson
 from tenacity import retry, stop_after_attempt, wait_exponential
 import decimal
+from langchain_community.embeddings import OllamaEmbeddings
 
 PG_CONFIG = {
     "dbname": os.getenv("POSTGRES_DB", "predator_db"),
@@ -21,15 +22,16 @@ OPENSEARCH_HOST = os.getenv("OPENSEARCH_HOSTS", "http://opensearch:9200")
 INDEX_NAME = "customs_data"
 os_client = OpenSearch([OPENSEARCH_HOST], http_auth=("admin", "strong_password"), use_ssl=False)
 
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+embeddings = OllamaEmbeddings(model="mistral", base_url=OLLAMA_HOST)
+
 def clean_key(key):
-    """Очищає ключ від зайвих пробілів і символів."""
     cleaned = key.strip()
     if cleaned.endswith('м') and ' ' in cleaned:
         cleaned = cleaned[:cleaned.rindex(' ')]
     return cleaned.strip()
 
 def clean_value(value, expected_type):
-    """Перетворює значення у відповідний тип для PostgreSQL."""
     if value is None or value == "":
         return None
     try:
@@ -59,12 +61,11 @@ def clean_value(value, expected_type):
     return value
 
 def clean_data(data):
-    """Замінює невалідні для JSON значення та очищає ключі."""
     if isinstance(data, dict):
         return {clean_key(k): clean_data(v) for k, v in data.items()}
-    elif isinstance(data, float) and (data != data):  # NaN
+    elif isinstance(data, float) and (data != data):
         return None
-    elif isinstance(data, decimal.Decimal):  # Decimal
+    elif isinstance(data, decimal.Decimal):
         return float(data)
     elif isinstance(data, list):
         return [clean_data(item) for item in data]
@@ -141,30 +142,33 @@ def insert_to_opensearch(data_batch):
         raise ConnectionError("Не вдалося підключитися до OpenSearch")
     print(f"Вставка {len(data_batch)} записів у OpenSearch")
     actions = []
-    for i, d in enumerate(clean_data(d) for d in data_batch):
+    for d in (clean_data(d) for d in data_batch):
+        description = d.get("Опис товару", "") or ""
+        # Обрізаємо до 2048 символів
+        truncated_description = description[:2048] if len(description) > 2048 else description
+        vector = embeddings.embed_query(truncated_description) if truncated_description else []
         try:
-            actions.append({"_index": INDEX_NAME, "_source": d})
+            actions.append({
+                "_index": INDEX_NAME,
+                "_source": {
+                    **d,
+                    "vector": vector
+                }
+            })
         except Exception as e:
-            print(f"Помилка підготовки запису {i} для OpenSearch: {d}, помилка: {e}")
+            print(f"Помилка підготовки запису для OpenSearch: {d}, помилка: {e}")
             continue
     
     successful_count = 0
-    failed_records = []
     try:
         response = helpers.bulk(os_client, actions, refresh=True, request_timeout=60, raise_on_error=False)
-        successful_count = response[0]  # Кількість успішно вставлених документів
-        if response[1]:  # Якщо є помилки
+        successful_count = response[0]
+        if response[1]:
             print(f"Виявлено помилки індексації в OpenSearch:")
-            for error in response[1][:5]:  # Логуємо перші 5 помилок
+            for error in response[1][:5]:
                 print(f"Деталі помилки: {error}")
-                failed_records.append(actions[error.get('index', {}).get('_id', 'unknown')])
-            print(f"Усього помилок: {len(response[1])}")
-            if len(response[1]) == len(actions):  # Якщо всі записи відхилені
-                raise helpers.BulkIndexError("Усі записи в пакеті відхилені", response[1])
     except Exception as e:
         print(f"Помилка вставки в OpenSearch: {e}")
-        for failed in failed_records[:5]:  # Логуємо перші 5 проблемних записів
-            print(f"Проблемний запис: {failed}")
         raise
     
     print(f"Успішно вставлено {successful_count} записів із {len(actions)} у OpenSearch")

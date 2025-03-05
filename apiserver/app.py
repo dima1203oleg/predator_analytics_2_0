@@ -2,8 +2,9 @@ import os
 import json
 import requests
 import sys
+import traceback
 from flask import Flask, request, jsonify
-from langchain.embeddings import OllamaEmbeddings
+from langchain_community.embeddings import OllamaEmbeddings
 from langchain.vectorstores.opensearch_vector_search import OpenSearchVectorSearch
 from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
@@ -34,7 +35,7 @@ llm = Ollama(model="mistral", base_url=OLLAMA_HOST)
 
 print(f"Connecting to OpenSearch: {OPENSEARCH_HOSTS[0]}", file=sys.stderr)
 vectorstore = OpenSearchVectorSearch(
-    index_name="predator_index",
+    index_name="customs_data",
     opensearch_url=OPENSEARCH_HOSTS[0],
     embedding_function=embeddings,
     http_auth=("admin", "strong_password"),
@@ -64,7 +65,17 @@ async def get_db_pool():
 
 @app.route('/api/version', methods=['GET'])
 def get_version():
-    return jsonify({"version": "1.0"}), 200
+    try:
+        ollama_version_url = f"{OLLAMA_HOST}/api/version"
+        response = requests.get(ollama_version_url, timeout=5)
+        if response.status_code == 200:
+            ollama_version = response.json().get("version", "unknown")
+            return jsonify({"version": ollama_version}), 200
+        else:
+            print(f"Failed to fetch version from Ollama, status: {response.status_code}", file=sys.stderr)
+    except Exception as e:
+        print(f"Error fetching version from Ollama: {e}", file=sys.stderr)
+    return jsonify({"version": "0.5.13"}), 200
 
 @app.route('/api/models', methods=['GET'])
 def get_models():
@@ -95,8 +106,7 @@ async def process_query():
         if cached := redis_client.get(cache_key):
             return jsonify({"source": "cache", "response": json.loads(cached)})
 
-        query_embedding = embeddings.embed_query(query)
-        docs = vectorstore.similarity_search_by_vector(query_embedding, k=5)
+        docs = vectorstore.similarity_search(query, k=5)  # Змінено на similarity_search
 
         pool = await get_db_pool()
         async with pool.acquire() as conn:
@@ -122,7 +132,7 @@ async def process_query():
         await log_query(query, final_response["answer"])
         return jsonify({"source": "rag", "response": final_response})
     except Exception as e:
-        print(f"Error in process_query: {e}", file=sys.stderr)
+        print(f"Error in process_query: {e}\n{traceback.format_exc()}", file=sys.stderr)
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/chat', methods=['POST'])
@@ -133,7 +143,6 @@ async def chat():
         if not messages:
             return jsonify({"error": "Messages are required"}), 400
 
-        # Отримуємо останнє повідомлення як запит
         query = messages[-1].get("content", "")
         if not query:
             return jsonify({"error": "Query content is required"}), 400
@@ -142,11 +151,8 @@ async def chat():
         if cached := redis_client.get(cache_key):
             return jsonify(json.loads(cached))
 
-        # Виконуємо пошук у vectorstore
-        query_embedding = embeddings.embed_query(query)
-        docs = vectorstore.similarity_search_by_vector(query_embedding, k=5)
+        docs = vectorstore.similarity_search(query, k=5)  # Змінено на similarity_search
 
-        # Виконуємо SQL-запит до PostgreSQL
         pool = await get_db_pool()
         async with pool.acquire() as conn:
             sql_results = await conn.fetch("""
@@ -156,17 +162,17 @@ async def chat():
                 LIMIT 5
             """, f"%{query}%")
 
-        # Формуємо контекст
         context = "\n".join(doc.page_content for doc in docs) + "\nSQL Results:\n" + "\n".join(str(row) for row in sql_results)
+        truncated_context = context[:2048] if len(context) > 2048 else context
+        
         qa_chain = RetrievalQA.from_chain_type(
             llm=llm,
             retriever=vectorstore.as_retriever(),
             return_source_documents=True,
             chain_type_kwargs={"prompt": prompt}
         )
-        response = qa_chain({"query": query, "context": context})
+        response = qa_chain({"query": query, "context": truncated_context})
 
-        # Формат відповіді, сумісний із Open Web UI
         chat_response = {
             "id": f"chatcmpl-{os.urandom(8).hex()}",
             "object": "chat.completion",
@@ -182,21 +188,14 @@ async def chat():
                     "finish_reason": "stop"
                 }
             ],
-            "usage": {
-                "prompt_tokens": 0,  # Placeholder, якщо потрібна точна статистика
-                "completion_tokens": 0,
-                "total_tokens": 0
-            }
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         }
 
-        # Кешуємо відповідь
         redis_client.setex(cache_key, 3600, json.dumps(chat_response))
-
-        # Логуємо запит
         await log_query(query, response["result"])
         return jsonify(chat_response)
     except Exception as e:
-        print(f"Error in chat: {e}", file=sys.stderr)
+        print(f"Error in chat: {e}\n{traceback.format_exc()}", file=sys.stderr)
         return jsonify({"error": str(e)}), 500
 
 @app.route('/upload_document', methods=['POST'])
@@ -226,7 +225,7 @@ async def upload_document():
 
         return jsonify({"status": "ok", "message": f"Файл {filename} успішно оброблено."})
     except Exception as e:
-        print(f"Error in upload_document: {e}", file=sys.stderr)
+        print(f"Error in upload_document: {e}\n{traceback.format_exc()}", file=sys.stderr)
         return jsonify({"error": str(e)}), 500
 
 async def log_query(query, answer):

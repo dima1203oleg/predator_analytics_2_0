@@ -1,10 +1,11 @@
 Flask==2.2.2
-asgiref==3.8.1  # Додано для flask[async]
+asgiref==3.8.1
 requests==2.28.1
 asyncpg==0.28.0
 tenacity==8.2.3
 redis==4.3.4
-langchain==0.0.300
+langchain==0.1.0  # Оновлено
+langchain-community==0.0.38
 opensearch-py==2.3.0
 unstructured==0.5.6
 werkzeug==2.3.7
