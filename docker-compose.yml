@@ -1,4 +1,3 @@
-version: '3.8'
 
 services:
   apiserver:
@@ -22,6 +21,7 @@ services:
         limits:
           cpus: '2'
           memory: 4G
+    restart: unless-stopped
 
   postgres:
     image: postgres:15
@@ -31,11 +31,29 @@ services:
       POSTGRES_PASSWORD: strong_password
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U predator"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+    restart: unless-stopped
 
   redis:
     image: redis:7
     ports:
       - "6379:6379"
+    command: redis-server --maxmemory 1gb --maxmemory-policy allkeys-lru
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+    restart: unless-stopped
 
   opensearch:
     image: opensearchproject/opensearch:2.11.0
@@ -45,6 +63,7 @@ services:
       - discovery.type=single-node
       - plugins.security.disabled=true
       - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms2g -Xmx2g"
     ulimits:
       memlock:
         soft: -1
@@ -53,35 +72,17 @@ services:
       - "9200:9200"
     volumes:
       - osdata:/usr/share/opensearch/data
-      - ./backups/opensearch:/usr/share/opensearch/backup
-
-  loki:
-    image: grafana/loki:2.8.2
-    user: "0:0"  # Run as root
-    ports:
-      - "3100:3100"
-    volumes:
-      - ./monitoring/loki-config.yml:/etc/loki/local-config.yaml
-      - lokidata:/loki
-      - loki-wal:/wal
-      - loki-compactor:/loki/compactor
-
-  promtail:
-    image: grafana/promtail:2.8.2
-    volumes:
-      - ./monitoring/promtail-config.yml:/etc/promtail/config.yml
-      - /var/run/docker.sock:/var/run/docker.sock
-    command: -config.file=/etc/promtail/config.yml
-
-  grafana:
-    image: grafana/grafana:10.1.2  # Оновлено до стабільної версії
-    ports:
-      - "3002:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=strong_password
-    volumes:
-      - ./monitoring/dashboards:/etc/grafana/provisioning/dashboards
-      - ./monitoring/dashboards/predator_dashboard.json:/var/lib/grafana/dashboards/predator_dashboard.json
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+    restart: unless-stopped
 
   openwebui:
     image: ghcr.io/open-webui/open-webui:main
@@ -91,27 +92,13 @@ services:
       - OLLAMA_API_BASE_URL=${OLLAMA_HOST:-http://host.docker.internal:11434}
     depends_on:
       - apiserver
-
-  prometheus:
-    image: prom/prometheus:v2.45.0
-    volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-    ports:
-      - "9090:9090"
-
-  cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.47.0
-    volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
-    ports:
-      - "8080:8080"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+    restart: unless-stopped
 
 volumes:
   pgdata:
   osdata:
-  lokidata:
-  loki-wal:
-  loki-compactor:

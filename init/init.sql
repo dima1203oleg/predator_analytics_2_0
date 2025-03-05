@@ -49,5 +49,15 @@ CREATE TABLE IF NOT EXISTS customs_data (
     "повна" INT
 );
 
+CREATE TABLE IF NOT EXISTS query_log (
+    id SERIAL PRIMARY KEY,
+    query TEXT NOT NULL,
+    response TEXT NOT NULL,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX idx_customs_data_date ON customs_data ("Дата");
 CREATE INDEX idx_customs_data_sender ON customs_data ("Відправник");
+CREATE INDEX idx_customs_data_receiver ON customs_data ("Одержувач");
+CREATE INDEX idx_customs_data_product_code ON customs_data ("Код товару");
+CREATE INDEX idx_query_log_timestamp ON query_log (timestamp);

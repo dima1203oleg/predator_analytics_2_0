@@ -166,27 +166,15 @@ curl -XPUT "http://localhost:9200/_snapshot/backup_repository/snapshot_1"
 
 Цей документ є частиною офіційної технічної документації Predator Analytics 2.0.
 
-predator_analytics_2_0/
+.
 ├── apiserver/
-│   ├── Dockerfile
 │   ├── app.py
-│   ├── requirements.txt
-│   └── tests/
-│       └── test_app.py
-├── data/
-│   └── customs_data.json  # Ваш JSON-файл із даними (назва може бути будь-якою)
+│   ├── Dockerfile
+│   └── requirements.txt
 ├── ingestion/
 │   └── import_to_opensearch_pg.py
 ├── init/
 │   └── init.sql
-├── monitoring/
-│   ├── dashboards/
-│   │   └── predator_dashboard.json
-│   ├── loki-config.yml
-│   └── promtail-config.yml
-├── .github/
-│   └── workflows/
-│       └── ci.yml
-├── .gitignore
-├── docker-compose.yml  # Версія 1.1 із монтуванням
-└── readme.txt
+├── data/
+│   └── customs_data.json
+└── docker-compose.yml
