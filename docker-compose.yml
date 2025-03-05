@@ -5,19 +5,28 @@ services:
       - POSTGRES_HOST=postgres
       - REDIS_HOST=redis
       - OPENSEARCH_HOSTS=http://opensearch:9200
-      - OLLAMA_HOST=${OLLAMA_HOST:-http://localhost:11434}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://localhost:11434}  # Залишаємо як заглушку, але не впливає на openwebui
+      - MAX_CONTEXT_LENGTH=${MAX_CONTEXT_LENGTH:-2048}
+      - OPENSEARCH_BULK_SIZE=${OPENSEARCH_BULK_SIZE:-500}
+      - MAX_FILE_SIZE=1073741824
     ports:
-      - "5001:5001"
+      - "5001:5001"  # Виправлено синтаксис портів
     depends_on:
       - postgres
       - redis
       - opensearch
     volumes:
-      - ./data:/app/data
-      - ./ingestion:/app/ingestion
+      - ./data:/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
       - "localhost:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    env_file:
+      - .env
     deploy:
       resources:
         limits:
@@ -28,13 +37,14 @@ services:
   postgres:
     image: postgres:15
     environment:
-      POSTGRES_DB: predator_db
-      POSTGRES_USER: predator
-      POSTGRES_PASSWORD: strong_password
+      - POSTGRES_DB=predator_db
+      - POSTGRES_USER=predator
+      - POSTGRES_PASSWORD=strong_password
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./init/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U predator"]
+      test: ["CMD-SHELL", "pg_isready -U predator -d predator_db"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -91,9 +101,13 @@ services:
     ports:
       - "3000:8080"
     environment:
-      - OLLAMA_API_BASE_URL=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - OLLAMA_API_BASE_URL=http://apiserver:5001  # Точно вказуємо apiserver
+      - ENABLE_OPENAI_API=false  # Вимикаємо OpenAI, щоб уникнути конфліктів
     depends_on:
-      - apiserver
+      apiserver:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Додано для сумісності, якщо потрібен доступ до хоста
     deploy:
       resources:
         limits:
