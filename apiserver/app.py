@@ -105,12 +105,14 @@ def get_tags():
     tags = [
         {
             "name": "mistral:latest",
+            "model": "mistral:latest",  # Додаємо для сумісності з openwebui
             "modified_at": "2025-03-05T20:00:00Z",
             "size": 0,
             "digest": "sha256:placeholder"
         },
         {
             "name": "custom:latest",
+            "model": "custom:latest",  # Додаємо для сумісності з openwebui
             "modified_at": "2025-03-05T20:00:00Z",
             "size": 0,
             "digest": "sha256:placeholder"
@@ -264,11 +266,6 @@ async def upload_document():
 
 @app.route('/convert_excel_to_csv_from_data', methods=['POST'])
 def convert_excel_to_csv_from_data():
-    """
-    Converts an Excel file (.xlsx/.xls) from /data to CSV and saves it in /data.
-    Expects a JSON payload with 'file_name' (e.g., 'customs_data.xlsx').
-    Returns the CSV file.
-    """
     try:
         data = request.json
         if not data or "file_name" not in data:
