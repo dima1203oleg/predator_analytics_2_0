@@ -64,7 +64,7 @@ async def get_db_pool():
 
 @app.route('/api/version', methods=['GET'])
 def get_version():
-    return jsonify({"version": "1.0"}), 200  # Залишено стандартну версію API
+    return jsonify({"version": "1.0"}), 200
 
 @app.route('/api/models', methods=['GET'])
 def get_models():
@@ -123,6 +123,80 @@ async def process_query():
         return jsonify({"source": "rag", "response": final_response})
     except Exception as e:
         print(f"Error in process_query: {e}", file=sys.stderr)
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/chat', methods=['POST'])
+async def chat():
+    try:
+        data = request.json
+        messages = data.get("messages", [])
+        if not messages:
+            return jsonify({"error": "Messages are required"}), 400
+
+        # Отримуємо останнє повідомлення як запит
+        query = messages[-1].get("content", "")
+        if not query:
+            return jsonify({"error": "Query content is required"}), 400
+
+        cache_key = f"chat_cache:{query}"
+        if cached := redis_client.get(cache_key):
+            return jsonify(json.loads(cached))
+
+        # Виконуємо пошук у vectorstore
+        query_embedding = embeddings.embed_query(query)
+        docs = vectorstore.similarity_search_by_vector(query_embedding, k=5)
+
+        # Виконуємо SQL-запит до PostgreSQL
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            sql_results = await conn.fetch("""
+                SELECT "Номер МД", "Опис товару", "Відправник", "Одержувач"
+                FROM customs_data
+                WHERE "Опис товару" ILIKE $1 OR "Відправник" ILIKE $1 OR "Одержувач" ILIKE $1
+                LIMIT 5
+            """, f"%{query}%")
+
+        # Формуємо контекст
+        context = "\n".join(doc.page_content for doc in docs) + "\nSQL Results:\n" + "\n".join(str(row) for row in sql_results)
+        qa_chain = RetrievalQA.from_chain_type(
+            llm=llm,
+            retriever=vectorstore.as_retriever(),
+            return_source_documents=True,
+            chain_type_kwargs={"prompt": prompt}
+        )
+        response = qa_chain({"query": query, "context": context})
+
+        # Формат відповіді, сумісний із Open Web UI
+        chat_response = {
+            "id": f"chatcmpl-{os.urandom(8).hex()}",
+            "object": "chat.completion",
+            "created": int(os.time()),
+            "model": "mistral",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": response["result"]
+                    },
+                    "finish_reason": "stop"
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 0,  # Placeholder, якщо потрібна точна статистика
+                "completion_tokens": 0,
+                "total_tokens": 0
+            }
+        }
+
+        # Кешуємо відповідь
+        redis_client.setex(cache_key, 3600, json.dumps(chat_response))
+
+        # Логуємо запит
+        await log_query(query, response["result"])
+        return jsonify(chat_response)
+    except Exception as e:
+        print(f"Error in chat: {e}", file=sys.stderr)
         return jsonify({"error": str(e)}), 500
 
 @app.route('/upload_document', methods=['POST'])

@@ -1,0 +1,2 @@
+docker exec -it predator_analytics_2_0-apiserver-1 curl -X DELETE "http://opensearch:9200/customs_data"
+docker exec -it predator_analytics_2_0-postgres-1 psql -U predator -d predator_db -c "TRUNCATE customs_data;"
