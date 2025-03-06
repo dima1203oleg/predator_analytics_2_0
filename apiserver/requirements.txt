@@ -15,3 +15,4 @@ psutil==5.9.8
 ijson==3.3.0
 openpyxl==3.1.2
 pandas==2.2.2
+aiofiles>=0.8.0
