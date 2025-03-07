@@ -1,34 +1,29 @@
 # Основні залежності
-Flask==2.2.2
-requests==2.28.1
-asyncpg==0.28.0
-redis==4.3.4
-tenacity==8.2.3
+Flask==3.0.3
+requests==2.31.0
+asyncpg==0.29.0
+redis==5.0.8
+tenacity==8.5.0
 ijson==3.3.0
-openpyxl==3.1.2
-pandas==2.2.2
-aiofiles>=0.8.0
+openpyxl==3.1.5
+aiofiles==23.2.1
 
 # LangChain та його компоненти
-langchain==0.2.0
-langchain-community==0.2.0
-langchain-core==0.2.0
+langchain==0.3.3  # Updated to resolve conflict with langchain-community
+langchain-community==0.3.2
+langchain-core==0.3.10
 
 # OpenSearch
-opensearch-py==2.3.0
+opensearch-py==2.7.0
 
 # Обробка документів
-unstructured==0.5.6
-pdfminer.six==20221105
-Pillow==10.0.0
-python-docx==0.8.11
-openpyxl==3.1.2
+unstructured==0.15.0
+pdfminer.six==20231228
+Pillow==10.4.0
+python-docx==1.1.2
 
 # Ollama
-ollama==0.1.0
+ollama==0.3.2
 
 # Інші залежності
-werkzeug==2.3.7
-psycopg2-binary==2.9.3
-psutil==5.9.8
-asgiref==3.8.1
+werkzeug==3.0.3

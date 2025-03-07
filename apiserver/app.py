@@ -34,7 +34,9 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "strong_password")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://host.docker.internal:11434")
 OPENSEARCH_HOSTS = os.getenv("OPENSEARCH_HOSTS", "http://localhost:9200").split(",")
 MAX_CONTEXT_LENGTH = int(os.getenv("MAX_CONTEXT_LENGTH", 2048))
@@ -43,17 +45,22 @@ MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", 10 * 1024 * 1024))  # 10 MB за 
 API_PORT = int(os.getenv("API_PORT", 5001))  # Порт для API
 
 logger.info(f"Connecting to Redis: {REDIS_HOST}")
-redis_client = Redis(host=REDIS_HOST, port=6379, decode_responses=True)
+redis_client = Redis(
+    host=REDIS_HOST,
+    port=6379,
+    password=REDIS_PASSWORD if REDIS_PASSWORD else None,
+    decode_responses=True
+)
 
 logger.info(f"Initializing embeddings with Ollama: {OLLAMA_HOST}")
-embeddings = OllamaEmbeddings(model="nomic-embed-text", base_url=OLLAMA_HOST)  # Статична модель для ембедінгів
+embeddings = OllamaEmbeddings(model="nomic-embed-text", base_url=OLLAMA_HOST)
 
 logger.info(f"Connecting to OpenSearch: {OPENSEARCH_HOSTS[0]}")
 vectorstore = OpenSearchVectorSearch(
     index_name="customs_data",
     opensearch_url=OPENSEARCH_HOSTS[0],
     embedding_function=embeddings,
-    http_auth=("admin", "strong_password"),
+    http_auth=("admin", os.getenv("OPENSEARCH_PASSWORD", "strong_password")),
     use_ssl=False,
     bulk_size=OPENSEARCH_BULK_SIZE
 )
@@ -73,7 +80,7 @@ async def get_db_pool():
     return await asyncpg.create_pool(
         database="predator_db",
         user="predator",
-        password="strong_password",
+        password=POSTGRES_PASSWORD,
         host=POSTGRES_HOST,
         command_timeout=10
     )
@@ -334,7 +341,7 @@ def chat():
 
         query = data["messages"][-1].get("content", "")
         model = data.get("model", "mistral:latest")
-        stream = data.get('stream', False)  # Check if streaming is requested
+        stream = data.get('stream', False)
         limit = int(data.get("limit", 5))
         offset = int(data.get("offset", 0))
 
@@ -346,7 +353,6 @@ def chat():
             if stream:
                 return Response(cached, mimetype='application/x-ndjson')
             else:
-                # Parse NDJSON cached response into a single JSON object
                 responses = [json.loads(line) for line in cached.strip().split('\n')]
                 content = ''.join([chunk['choices'][0]['delta'].get('content', '') for chunk in responses if 'content' in chunk['choices'][0]['delta']])
                 return jsonify({
@@ -361,7 +367,25 @@ def chat():
                     }]
                 })
 
-        # Existing code to fetch docs and SQL results...
+        # Fetch relevant documents from OpenSearch
+        docs = vectorstore.similarity_search(query, k=limit, offset=offset)
+
+        # Fetch SQL results from PostgreSQL
+        async def fetch_results():
+            pool = await get_db_pool()
+            async with pool.acquire() as conn:
+                return await conn.fetch("""
+                    SELECT "Номер МД", "Опис товару", "Відправник", "Одержувач", "Код товару"
+                    FROM customs_data
+                    WHERE "Опис товару" ILIKE $1 OR "Відправник" ILIKE $1 OR "Одержувач" ILIKE $1 OR "Код товару" ILIKE $1
+                    LIMIT $2 OFFSET $3
+                """, f"%{query}%", limit, offset)
+
+        sql_results = asyncio.run(fetch_results())
+
+        # Combine and truncate context
+        context = "\n".join(doc.page_content for doc in docs) + "\nSQL Results:\n" + "\n".join(str(row) for row in sql_results)
+        truncated_context = context[:MAX_CONTEXT_LENGTH] if len(context) > MAX_CONTEXT_LENGTH else context
 
         # Generate response
         llm = Ollama(model=model, base_url=OLLAMA_HOST)
@@ -375,7 +399,6 @@ def chat():
         answer = response["result"]
 
         if stream:
-            # Generate streaming response
             def generate():
                 chat_id = f"chat-{uuid.uuid4()}"
                 created_time = int(time.time())
@@ -394,7 +417,6 @@ def chat():
                     }
                     yield json.dumps(chunk) + "\n"
 
-                # Final chunk
                 final_chunk = {
                     "id": chat_id,
                     "object": "chat.completion.chunk",
@@ -412,7 +434,6 @@ def chat():
             redis_client.setex(cache_key, 3600, full_response)
             return Response(generate(), mimetype='application/x-ndjson')
         else:
-            # Non-streaming response
             response_data = {
                 "id": f"chat-{uuid.uuid4()}",
                 "object": "chat.completion",
@@ -442,7 +463,7 @@ def process_query():
             return Response(json.dumps({"error": "Query is required"}), mimetype='application/json'), 400
 
         query = data["query"]
-        model = data.get("model", "mistral:latest")  # Отримуємо модель із запиту
+        model = data.get("model", "mistral:latest")
         limit = int(data.get("limit", 5))
         offset = int(data.get("offset", 0))
 
@@ -469,7 +490,7 @@ def process_query():
 
         context = "\n".join(doc.page_content for doc in docs) + "\nSQL Results:\n" + "\n".join(str(row) for row in sql_results)
         truncated_context = context[:MAX_CONTEXT_LENGTH] if len(context) > MAX_CONTEXT_LENGTH else context
-        llm = Ollama(model=model, base_url=OLLAMA_HOST)  # Використовуємо обрану модель
+        llm = Ollama(model=model, base_url=OLLAMA_HOST)
         qa_chain = RetrievalQA.from_chain_type(
             llm=llm,
             retriever=vectorstore.as_retriever(),

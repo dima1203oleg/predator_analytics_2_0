@@ -1,3 +1,4 @@
+-- Create the customs_data table if it does not exist
 CREATE TABLE IF NOT EXISTS customs_data (
     id SERIAL PRIMARY KEY,
     "Час оформлення" TIMESTAMP,
@@ -49,6 +50,7 @@ CREATE TABLE IF NOT EXISTS customs_data (
     "повна" INT
 );
 
+-- Create the query_log table if it does not exist
 CREATE TABLE IF NOT EXISTS query_log (
     id SERIAL PRIMARY KEY,
     query TEXT NOT NULL,
@@ -56,8 +58,9 @@ CREATE TABLE IF NOT EXISTS query_log (
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_customs_data_date ON customs_data ("Дата");
-CREATE INDEX idx_customs_data_sender ON customs_data ("Відправник");
-CREATE INDEX idx_customs_data_receiver ON customs_data ("Одержувач");
-CREATE INDEX idx_customs_data_product_code ON customs_data ("Код товару");
-CREATE INDEX idx_query_log_timestamp ON query_log (timestamp);
+-- Create indexes for faster querying
+CREATE INDEX IF NOT EXISTS idx_customs_data_date ON customs_data ("Дата");
+CREATE INDEX IF NOT EXISTS idx_customs_data_sender ON customs_data ("Відправник");
+CREATE INDEX IF NOT EXISTS idx_customs_data_receiver ON customs_data ("Одержувач");
+CREATE INDEX IF NOT EXISTS idx_customs_data_product_code ON customs_data ("Код товару");
+CREATE INDEX IF NOT EXISTS idx_query_log_timestamp ON query_log (timestamp);
