@@ -1,29 +1,18 @@
-# Основні залежності
 Flask==3.0.3
-requests==2.31.0
+requests>=2.32.0,<3.0.0
 asyncpg==0.29.0
 redis==5.0.8
 tenacity==8.5.0
 ijson==3.3.0
 openpyxl==3.1.5
 aiofiles==23.2.1
-
-# LangChain та його компоненти
-langchain==0.3.3  # Updated to resolve conflict with langchain-community
+langchain==0.3.3
 langchain-community==0.3.2
 langchain-core==0.3.10
-
-# OpenSearch
 opensearch-py==2.7.0
-
-# Обробка документів
 unstructured==0.15.0
 pdfminer.six==20231228
 Pillow==10.4.0
 python-docx==1.1.2
-
-# Ollama
 ollama==0.3.2
-
-# Інші залежності
 werkzeug==3.0.3

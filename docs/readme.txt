@@ -281,9 +281,8 @@ To completely clean up all containers, images, volumes and orphaned containers:
   ```
 
 ---
+docker system prune -a --volumes -f
 
-docker-compose down --rmi all -v --remove-orphans
-docker system prune -a --volumes
 ### Примітки
 - Якщо `customs_data.json` великий (декілька мільйонів записів), імпорт може зайняти час. Слідкуйте за виводом у терміналі.
 - У разі помилок перевірте логи контейнерів (`docker-compose logs <service_name>`).
