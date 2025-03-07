@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   apiserver:
     build: ./apiserver
@@ -5,12 +7,13 @@ services:
       - POSTGRES_HOST=postgres
       - REDIS_HOST=redis
       - OPENSEARCH_HOSTS=http://opensearch:9200
-      - OLLAMA_HOST=${OLLAMA_HOST:-http://localhost:11434}  # Залишаємо як заглушку, але не впливає на openwebui
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
       - MAX_CONTEXT_LENGTH=${MAX_CONTEXT_LENGTH:-2048}
       - OPENSEARCH_BULK_SIZE=${OPENSEARCH_BULK_SIZE:-500}
-      - MAX_FILE_SIZE=1073741824
+      - MAX_FILE_SIZE=1073741824  # 1 GB
+      - API_PORT=5001
     ports:
-      - "5001:5001"  # Виправлено синтаксис портів
+      - "5001:5001"
     depends_on:
       - postgres
       - redis
@@ -33,13 +36,15 @@ services:
           cpus: '2'
           memory: 4G
     restart: unless-stopped
+    networks:
+      - predator-network
 
   postgres:
     image: postgres:15
     environment:
       - POSTGRES_DB=predator_db
       - POSTGRES_USER=predator
-      - POSTGRES_PASSWORD=strong_password
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-strong_password}  # Використовуємо значення за замовчуванням
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./init/init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -54,18 +59,24 @@ services:
           cpus: '2'
           memory: 2G
     restart: unless-stopped
+    networks:
+      - predator-network
 
   redis:
     image: redis:7
     ports:
       - "6379:6379"
     command: redis-server --maxmemory 1gb --maxmemory-policy allkeys-lru
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-your_redis_password}  # Використовуємо значення за замовчуванням
     deploy:
       resources:
         limits:
           cpus: '1'
           memory: 1G
     restart: unless-stopped
+    networks:
+      - predator-network
 
   opensearch:
     image: opensearchproject/opensearch:2.11.0
@@ -92,29 +103,42 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 4G
+          cpus: '4'
+          memory: 8G
     restart: unless-stopped
+    networks:
+      - predator-network
 
   openwebui:
     image: ghcr.io/open-webui/open-webui:main
     ports:
       - "3000:8080"
     environment:
-      - OLLAMA_API_BASE_URL=http://apiserver:5001  # Точно вказуємо apiserver
-      - ENABLE_OPENAI_API=false  # Вимикаємо OpenAI, щоб уникнути конфліктів
+      - OLLAMA_API_BASE_URL=http://apiserver:5001
+      - FORCE_OLLAMA_API_BASE_URL=true
+      - ENABLE_OLLAMA_API=true
+      - STREAMING_ENABLED=true
     depends_on:
       apiserver:
         condition: service_healthy
     extra_hosts:
-      - "host.docker.internal:host-gateway"  # Додано для сумісності, якщо потрібен доступ до хоста
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - openwebui-data:/app/backend/data
     deploy:
       resources:
         limits:
           cpus: '1'
           memory: 1G
     restart: unless-stopped
+    networks:
+      - predator-network
 
 volumes:
   pgdata:
   osdata:
+  openwebui-data:
+
+networks:
+  predator-network:
+    driver: bridge
