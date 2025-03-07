@@ -9,6 +9,7 @@ aiofiles==23.2.1
 langchain==0.3.3
 langchain-community==0.3.2
 langchain-core==0.3.10
+langchain-ollama>=0.0.3
 opensearch-py==2.7.0
 unstructured==0.15.0
 pdfminer.six==20231228

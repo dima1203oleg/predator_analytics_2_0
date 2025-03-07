@@ -17,7 +17,8 @@ from langchain_community.document_loaders import (
     UnstructuredExcelLoader, CSVLoader
 )
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.llms import Ollama
+# Заменяем устаревший импорт на новый
+from langchain_ollama import OllamaLLM
 from redis import Redis
 from tenacity import retry, stop_after_attempt, wait_exponential
 import asyncpg
@@ -28,7 +29,7 @@ import asyncio
 from collections import deque
 
 # Налаштування логування
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')  # Исправлен формат логирования
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
@@ -130,14 +131,14 @@ async def index_csv_data(file_path, expected_headers, buffer):
                         return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
                     except ValueError:
                         try:
-                            return datetime.strptime(f"1970-01-01 {value}", "%Y-%m-%d %H:%M:%S")
+                            return datetime.strptime(f"1970-01-01 {value}", "%Y-%м-%d %H:%М:%S")
                         except ValueError:
                             try:
-                                return datetime.strptime(f"1970-01-01 {value}", "%Y-%m-%d %H:%M:%S.%f")
+                                return datetime.strptime(f"1970-01-01 {value}", "%Y-%м-%d %H:%М:%S.%f")
                             except ValueError:
                                 try:
                                     value = value.replace("М", "M")
-                                    return datetime.strptime(value, "%Y-%m-%d %H:%M:%S.%f")
+                                    return datetime.strptime(value, "%Y-%м-%d %H:%М:%С.%f")
                                 except ValueError:
                                     logger.error(f"Invalid date format for value '{value}'")
                                     return default
@@ -322,14 +323,19 @@ def get_version():
 @app.route('/api/models', methods=['GET'])
 def get_models():
     try:
+        logger.debug("Fetching models from Ollama")
         ollama_tags_url = f"{OLLAMA_HOST}/api/tags"
         response = requests.get(ollama_tags_url, timeout=5)
         response.raise_for_status()
         models = response.json().get("models", [])
-        return Response(json.dumps([{"id": m["name"], "name": m["name"]} for m in models]), mimetype='application/json'), 200
+        result = [{"id": m["name"], "name": m["name"], "object": "model"} for m in models]  # Добавлен ключ "object"
+        logger.debug(f"Returning models: {json.dumps(result)}")
+        return Response(json.dumps({"object": "list", "data": result}), mimetype='application/json'), 200
     except Exception as e:
         logger.error(f"Error fetching models from Ollama: {e}")
-        return Response(json.dumps([{"id": "mistral:latest", "name": "Mistral Model"}]), mimetype='application/json'), 200
+        # Возвращаем совместимый с OpenAI формат
+        default_models = [{"id": "mistral:latest", "name": "Mistral Model", "object": "model"}]
+        return Response(json.dumps({"object": "list", "data": default_models}), mimetype='application/json'), 200
 
 @app.route('/api/tags', methods=['GET'])
 def get_tags():
@@ -354,6 +360,8 @@ def get_tags():
 def chat():
     try:
         data = request.json
+        logger.debug(f"Received chat request: {json.dumps(data)}")
+        
         if not data or not isinstance(data.get("messages"), list) or not data["messages"]:
             return jsonify({"error": "Messages must be a non-empty list"}), 400
 
@@ -369,26 +377,22 @@ def chat():
         cache_key = f"chat_cache:{query}:{limit}:{offset}:{model}"
         if cached := redis_client.get(cache_key):
             if stream:
+                logger.debug(f"Returning cached stream response for query: {query}")
                 return Response(cached, mimetype='application/x-ndjson')
             else:
-                responses = [json.loads(line) for line in cached.strip().split('\n')]
-                content = ''.join([chunk['choices'][0]['delta'].get('content', '') for chunk in responses if 'content' in chunk['choices'][0]['delta']])
-                return jsonify({
-                    "id": responses[0]['id'],
-                    "object": "chat.completion",
-                    "created": responses[0]['created'],
-                    "model": model,
-                    "choices": [{
-                        "index": 0,
-                        "message": {"role": "assistant", "content": content},
-                        "finish_reason": "stop"
-                    }]
-                })
-
-        # Отримання документів із OpenSearch
+                try:
+                    # Для не-потоковых ответов нужно правильно обработать кешированный ответ
+                    response_data = json.loads(cached)
+                    logger.debug(f"Returning cached response: {json.dumps(response_data)}")
+                    return jsonify(response_data)
+                except Exception as e:
+                    logger.error(f"Error processing cached response: {e}")
+                    # Если возникла ошибка при обработке кэша, продолжаем как если бы кэша не было
+        
+        # Получение документов из OpenSearch
         docs = vectorstore.similarity_search(query, k=limit, offset=offset)
-
-        # Отримання даних із PostgreSQL
+        
+        # Получение данных из PostgreSQL
         async def fetch_results():
             pool = await get_db_pool()
             async with pool.acquire() as conn:
@@ -400,28 +404,47 @@ def chat():
                 """, f"%{query}%", limit, offset)
 
         sql_results = asyncio.run(fetch_results())
-
-        # Об'єднання та скорочення контексту
+        
+        # Объединение и сокращение контекста
         context = "\n".join(doc.page_content for doc in docs) + "\nSQL Results:\n" + "\n".join(str(row) for row in sql_results)
-        max_context_length = int(os.getenv("MAX_CONTEXT_LENGTH", 2048))
-        truncated_context = context[:max_context_length] if len(context) > max_context_length else context
-
-        # Генерація відповіді
-        llm = Ollama(model=model, base_url=OLLAMA_HOST)
+        truncated_context = context[:MAX_CONTEXT_LENGTH] if len(context) > MAX_CONTEXT_LENGTH else context
+        
+        # Используем новый API LangChain для работы с Ollama
+        llm = OllamaLLM(model=model, base_url=OLLAMA_HOST)
         qa_chain = RetrievalQA.from_chain_type(
             llm=llm,
             retriever=vectorstore.as_retriever(),
             return_source_documents=True,
             chain_type_kwargs={"prompt": prompt}
         )
-        response = qa_chain({"query": query, "context": truncated_context})
+        
+        # Используем invoke вместо прямого вызова
+        response = qa_chain.invoke({"query": query, "context": truncated_context})
         answer = response["result"]
-
+        logger.debug(f"Generated answer: {answer}")
+        
         if stream:
             def generate():
                 chat_id = f"chat-{uuid.uuid4()}"
                 created_time = int(time.time())
+                
+                # Отправляем начальный чанк с ролью (важно для OpenAI-совместимого API)
+                initial_chunk = {
+                    "id": chat_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_time,
+                    "model": model,
+                    "choices": [{
+                        "index": 0,
+                        "delta": {"role": "assistant"},
+                        "finish_reason": None
+                    }]
+                }
+                yield json.dumps(initial_chunk) + "\n"
+                
+                # Разбиваем ответ на токены (здесь используем слова для простоты)
                 words = answer.split()
+                
                 for i, word in enumerate(words):
                     chunk = {
                         "id": chat_id,
@@ -435,7 +458,8 @@ def chat():
                         }]
                     }
                     yield json.dumps(chunk) + "\n"
-
+                
+                # Финальный чанк для обозначения конца стрима
                 final_chunk = {
                     "id": chat_id,
                     "object": "chat.completion.chunk",
@@ -448,11 +472,20 @@ def chat():
                     }]
                 }
                 yield json.dumps(final_chunk) + "\n"
-
-            full_response = "".join(list(generate()))
+            
+            # Собираем полный ответ для кэширования
+            response_generator = generate()
+            response_chunks = list(response_generator)
+            full_response = "".join(response_chunks)
+            
+            # Сохраняем ndjson в кеше, чтобы он мог быть возвращен непосредственно
             redis_client.setex(cache_key, 3600, full_response)
-            return Response(generate(), mimetype='application/x-ndjson')
+            logger.debug(f"Cached stream response for key: {cache_key}")
+            
+            # Возвращаем клиенту поток чанков
+            return Response((chunk for chunk in response_chunks), mimetype='application/x-ndjson')
         else:
+            # Обычный (не потоковый) ответ
             response_data = {
                 "id": f"chat-{uuid.uuid4()}",
                 "object": "chat.completion",
@@ -461,18 +494,22 @@ def chat():
                 "choices": [{
                     "index": 0,
                     "message": {
-                        "role": "assistant",
-                        "content": answer,
+                        "role": "assistant", 
+                        "content": answer
                     },
                     "finish_reason": "stop"
                 }]
             }
+            
+            # Сохранить в кэше как JSON объект, а не строку
             redis_client.setex(cache_key, 3600, json.dumps(response_data))
+            logger.debug(f"Cached non-stream response for key: {cache_key}")
+            logger.debug(f"Returning response: {json.dumps(response_data)}")
             return jsonify(response_data)
-
+    
     except Exception as e:
-        logger.error(f"Error in chat: {e}\n{traceback.format_exc()}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Error in chat endpoint: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": str(e), "detail": "Internal server error in chat endpoint"}), 500
 
 @app.route('/process_query', methods=['POST'])
 def process_query():
@@ -659,6 +696,25 @@ def convert_excel_to_csv_from_data():
 @app.route('/health', methods=['GET'])
 def health_check():
     return Response(json.dumps({"status": "ok"}), mimetype='application/json'), 200
+
+# Добавим диагностический эндпоинт для проверки совместимости
+@app.route('/api/compatibility', methods=['GET'])
+def check_compatibility():
+    sample_response = {
+        "id": "chat-12345",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": "mistral:latest",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "Это тестовый ответ для проверки совместимости с Open WebUI"
+            },
+            "finish_reason": "stop"
+        }]
+    }
+    return jsonify(sample_response)
 
 if __name__ == "__main__":
     logger.info(f"Running Flask app on port {API_PORT}...")
