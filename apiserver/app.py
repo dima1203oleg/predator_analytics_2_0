@@ -185,7 +185,7 @@ async def index_csv_data(file_path, expected_headers, buffer):
                         "Призн.Зед": row.get("Призн.Зед", "") if row.get("Призн.Зед") and row.get("Призн.Зед").strip() else None,
                         "Мін.База Дол/кг.": parse_float(row.get("Мін.База Дол/кг.", 0)) if row.get("Мін.База Дол/кг.") and row.get("Мін.База Дол/кг.").strip() else None,
                         "Різн.мін.база": parse_float(row.get("Різн.мін.база", 0)) if row.get("Різн.мін.база") and row.get("Різн.мін.база").strip() else None,
-                        "КЗ Нетто Дол/кг.": parse_float(row.get("КЗ Нетто Дол/кг.", 0)) if row.get("КЗ Нетто Дол/кг.") and row.get("КЗ Нетто Дол/кг.").strip() else None,
+                        "КЗ Нетто Дол/кг.": parse_float(row.get("КЗ Нетто Дол/кг.", 0)) if row.get("КЗ.ConcurrentHashMap Нетто Дол/кг.") and row.get("КЗ Нетто Дол/кг.").strip() else None,
                         "КЗ Дол/шт.": parse_float(row.get("КЗ Дол/шт.", 0)) if row.get("КЗ Дол/шт.") and row.get("КЗ Дол/шт.").strip() else None,
                         "Різн.КЗ Дол/кг": parse_float(row.get("Різн.КЗ Дол/кг", 0)) if row.get("Різн.КЗ Дол/кг") and row.get("Різн.КЗ Дол/кг").strip() else None,
                         "Різ.КЗ Дол/шт": parse_float(row.get("Різ.КЗ Дол/шт", 0)) if row.get("Різ.КЗ Дол/шт") and row.get("Різ.КЗ Дол/шт").strip() else None,
@@ -367,11 +367,10 @@ def chat():
                     }]
                 })
 
-        # Fetch relevant documents from OpenSearch
-        logger.info("Fetching documents from OpenSearch")
+        # Отримання документів із OpenSearch
         docs = vectorstore.similarity_search(query, k=limit, offset=offset)
 
-        # Fetch SQL results from PostgreSQL
+        # Отримання даних із PostgreSQL
         async def fetch_results():
             pool = await get_db_pool()
             async with pool.acquire() as conn:
@@ -382,23 +381,23 @@ def chat():
                     LIMIT $2 OFFSET $3
                 """, f"%{query}%", limit, offset)
 
-        logger.info("Fetching SQL results")
         sql_results = asyncio.run(fetch_results())
 
-        # Combine and truncate context
-context = "\n".join(doc.page_content for doc in docs) + "\nSQL Results:\n" + "\n".join(str(row) for row in sql_results)
-truncated_context = context[:MAX_CONTEXT_LENGTH] if len(context) > MAX_CONTEXT_LENGTH else context
+        # Об'єднання та скорочення контексту
+        context = "\n".join(doc.page_content for doc in docs) + "\nSQL Results:\n" + "\n".join(str(row) for row in sql_results)
+        max_context_length = int(os.getenv("MAX_CONTEXT_LENGTH", 2048))
+        truncated_context = context[:max_context_length] if len(context) > max_context_length else context
 
-# Generate response
-llm = Ollama(model=model, base_url=OLLAMA_HOST)
-qa_chain = RetrievalQA.from_chain_type(
-    llm=llm,
-    retriever=vectorstore.as_retriever(),
-    return_source_documents=True,
-    chain_type_kwargs={"prompt": prompt}
-)
-response = qa_chain({"query": query, "context": truncated_context})
-answer = response["result"]
+        # Генерація відповіді
+        llm = Ollama(model=model, base_url=OLLAMA_HOST)
+        qa_chain = RetrievalQA.from_chain_type(
+            llm=llm,
+            retriever=vectorstore.as_retriever(),
+            return_source_documents=True,
+            chain_type_kwargs={"prompt": prompt}
+        )
+        response = qa_chain({"query": query, "context": truncated_context})
+        answer = response["result"]
 
         if stream:
             def generate():

@@ -199,12 +199,13 @@ To completely clean up all containers, images, volumes and orphaned containers:
 1. Переконайтеся, що структура директорій виглядає так:
    ```
    .
-   ├── apiserver/
-│   ├── app.py
+.
+├── apiserver/
+│   ├── app.py  
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── index_pg_os.py
-│   
+├── .env
 ├── init/
 │   └── init.sql
 ├── data/
