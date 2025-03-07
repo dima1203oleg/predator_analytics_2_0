@@ -46,8 +46,8 @@ CREATE TABLE IF NOT EXISTS customs_data (
     "Різ.КЗ Дол/шт" DOUBLE PRECISION,
     "КЗ Брутто Дол/кг." DOUBLE PRECISION,
     "Різ.КЗ Брутто" DOUBLE PRECISION,
-    "пільгова" INT,
-    "повна" INT
+    "пільгова" DOUBLE PRECISION,
+    "повна" TEXT
 );
 
 -- Create the query_log table if it does not exist
@@ -64,3 +64,34 @@ CREATE INDEX IF NOT EXISTS idx_customs_data_sender ON customs_data ("Відпр�
 CREATE INDEX IF NOT EXISTS idx_customs_data_receiver ON customs_data ("Одержувач");
 CREATE INDEX IF NOT EXISTS idx_customs_data_product_code ON customs_data ("Код товару");
 CREATE INDEX IF NOT EXISTS idx_query_log_timestamp ON query_log (timestamp);
+
+-- Migration for existing data - update field types if the table already exists
+DO $$
+BEGIN
+    -- Check if the table exists and if the columns have the wrong types
+    IF EXISTS (
+        SELECT FROM information_schema.columns 
+        WHERE table_name = 'customs_data' 
+        AND column_name = 'пільгова' 
+        AND data_type = 'integer'
+    ) THEN
+        ALTER TABLE customs_data 
+        ALTER COLUMN "пільгова" TYPE DOUBLE PRECISION USING CASE 
+            WHEN "пільгова" IS NULL THEN NULL 
+            ELSE "пільгова"::DOUBLE PRECISION 
+        END;
+    END IF;
+
+    IF EXISTS (
+        SELECT FROM information_schema.columns 
+        WHERE table_name = 'customs_data' 
+        AND column_name = 'повна' 
+        AND data_type = 'integer'
+    ) THEN
+        ALTER TABLE customs_data 
+        ALTER COLUMN "повна" TYPE TEXT USING CASE 
+            WHEN "повна" IS NULL THEN NULL 
+            ELSE "повна"::TEXT 
+        END;
+    END IF;
+END $$;

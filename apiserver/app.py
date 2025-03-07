@@ -85,7 +85,7 @@ async def get_db_pool():
         command_timeout=10
     )
 
-# Асинхронна функція для індексації з буфером
+# Виправлена функція для індексації з буфером
 async def index_csv_data(file_path, expected_headers, buffer):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
@@ -94,15 +94,27 @@ async def index_csv_data(file_path, expected_headers, buffer):
 
         with open(file_path, 'r', encoding='utf-8') as csvfile:
             content = csvfile.read()
-            reader = csv.DictReader(io.StringIO(content))
-            headers = reader.fieldnames
+            csv_reader = csv.DictReader(io.StringIO(content))
+            headers = csv_reader.fieldnames
+            logger.info(f"CSV headers: {headers}")
             if not headers or len(headers) != len(expected_headers):
                 logger.warning(f"Header mismatch, using expected headers: {headers}")
                 headers = expected_headers
 
-            total_rows = sum(1 for _ in io.StringIO(content)) - 1
+            rows = list(csv_reader)
+            total_rows = len(rows)
             logger.info(f"Total rows in file: {total_rows}")
             buffer.append(json.dumps({"total_rows": total_rows}) + "\n")
+
+            if not rows:
+                logger.warning("No data rows found in CSV file")
+                buffer.append(json.dumps({"status": "warning", "message": "No data rows found in CSV file"}) + "\n")
+                await pool.close()
+                return
+
+            # Додаємо логування першого рядка для перевірки
+            if rows:
+                logger.info(f"First row sample: {rows[0]}")
 
             documents = []
             batch_size = 500
@@ -140,10 +152,17 @@ async def index_csv_data(file_path, expected_headers, buffer):
                     logger.warning(f"Could not parse float from '{value}', using default: {default}")
                     return default
 
-            for i, row in enumerate(reader):
-                if i == 0:
-                    continue
+            def parse_int(value, default=None):
+                if not value or not value.strip():
+                    return default
+                try:
+                    return int(float(value.replace(',', '.')))
+                except (ValueError, TypeError):
+                    logger.warning(f"Could not parse int from '{value}', using default: {default}")
+                    return default
 
+            for i, row in enumerate(rows):
+                logger.info(f"Processing row {i + 1} of {total_rows}: {row}")
                 try:
                     row_data = {
                         "Час оформлення": parse_datetime(row.get("Час оформлення", "")),
@@ -152,9 +171,9 @@ async def index_csv_data(file_path, expected_headers, buffer):
                         "Номер МД": row.get("Номер МД", ""),
                         "Дата": parse_datetime(row.get("Дата", "")),
                         "Відправник": row.get("Відправник", ""),
-                        "ЕДРПОУ": int(row.get("ЕДРПОУ", 0)) if row.get("ЕДРПОУ") and row.get("ЕДРПОУ").strip() else None,
+                        "ЕДРПОУ": parse_int(row.get("ЕДРПОУ", 0)),
                         "Одержувач": row.get("Одержувач", ""),
-                        "№": int(row.get("№", 0)) if row.get("№") and row.get("№").strip() else None,
+                        "№": parse_int(row.get("№", 0)),
                         "Код товару": row.get("Код товару", ""),
                         "Опис товару": row.get("Опис товару", ""),
                         "Кр.торг.": row.get("Кр.торг.", ""),
@@ -163,29 +182,29 @@ async def index_csv_data(file_path, expected_headers, buffer):
                         "Умови пост.": row.get("Умови пост.", ""),
                         "Місце пост": row.get("Місце пост", ""),
                         "К-ть": parse_float(row.get("К-ть", 0)) if row.get("К-ть") and row.get("К-ть").strip() else None,
-                        "Один.вим.": int(row.get("Один.вим.", 0)) if row.get("Один.вим.") and row.get("Один.вим.").strip() else None,
+                        "Один.вим.": parse_int(row.get("Один.вим.", 0)),
                         "Брутто, кг.": parse_float(row.get("Брутто, кг.", 0)) if row.get("Брутто, кг.") and row.get("Брутто, кг.").strip() else None,
                         "Нетто, кг.": parse_float(row.get("Нетто, кг.", 0)) if row.get("Нетто, кг.") and row.get("Нетто, кг.").strip() else None,
                         "Вага по МД": parse_float(row.get("Вага по МД", 0)) if row.get("Вага по МД") and row.get("Вага по МД").strip() else None,
                         "ФВ вал.контр": parse_float(row.get("ФВ вал.контр", 0)) if row.get("ФВ вал.контр") and row.get("ФВ вал.контр").strip() else None,
                         "Особ.перем.": row.get("Особ.перем.", ""),
-                        "43": int(row.get("43", 0)) if row.get("43") and row.get("43").strip() else None,
-                        "43_01": int(row.get("43_01", 0)) if row.get("43_01") and row.get("43_01").strip() else None,
+                        "43": parse_int(row.get("43", 0)),
+                        "43_01": parse_int(row.get("43_01", 0)),
                         "РФВ Дол/кг.": parse_float(row.get("РФВ Дол/кг.", 0)) if row.get("РФВ Дол/кг.") and row.get("РФВ Дол/кг.").strip() else None,
                         "Вага.один.": parse_float(row.get("Вага.один.", 0)) if row.get("Вага.один.") and row.get("Вага.один.").strip() else None,
                         "Вага різн.": parse_float(row.get("Вага різн.", 0)) if row.get("Вага різн.") and row.get("Вага різн.").strip() else None,
                         "Контракт": row.get("Контракт", ""),
-                        "3001": int(row.get("3001", 0)) if row.get("3001") and row.get("3001").strip() else None,
-                        "3002": int(row.get("3002", 0)) if row.get("3002") and row.get("3002").strip() else None,
-                        "9610": int(row.get("9610", 0)) if row.get("9610") and row.get("9610").strip() else None,
+                        "3001": parse_int(row.get("3001", 0)),
+                        "3002": parse_int(row.get("3002", 0)),
+                        "9610": parse_int(row.get("9610", 0)),
                         "Торг.марк.": row.get("Торг.марк.", ""),
                         "РМВ Нетто Дол/кг.": parse_float(row.get("РМВ Нетто Дол/кг.", 0)) if row.get("РМВ Нетто Дол/кг.") and row.get("РМВ Нетто Дол/кг.").strip() else None,
                         "РМВ Дол/дод.од.": parse_float(row.get("РМВ Дол/дод.од.", 0)) if row.get("РМВ Дол/дод.од.") and row.get("РМВ Дол/дод.од.").strip() else None,
                         "РМВ Брутто Дол/кг": parse_float(row.get("РМВ Брутто Дол/кг", 0)) if row.get("РМВ Брутто Дол/кг") and row.get("РМВ Брутто Дол/кг").strip() else None,
-                        "Призн.Зед": row.get("Призн.Зед", "") if row.get("Призн.Зед") and row.get("Призн.Зед").strip() else None,
+                        "Призн.Зед": parse_int(row.get("Призн.Зед", 0)),
                         "Мін.База Дол/кг.": parse_float(row.get("Мін.База Дол/кг.", 0)) if row.get("Мін.База Дол/кг.") and row.get("Мін.База Дол/кг.").strip() else None,
                         "Різн.мін.база": parse_float(row.get("Різн.мін.база", 0)) if row.get("Різн.мін.база") and row.get("Різн.мін.база").strip() else None,
-                        "КЗ Нетто Дол/кг.": parse_float(row.get("КЗ Нетто Дол/кг.", 0)) if row.get("КЗ.ConcurrentHashMap Нетто Дол/кг.") and row.get("КЗ Нетто Дол/кг.").strip() else None,
+                        "КЗ Нетто Дол/кг.": parse_float(row.get("КЗ Нетто Дол/кг.", 0)) if row.get("КЗ Нетто Дол/кг.") and row.get("КЗ Нетто Дол/кг.").strip() else None,
                         "КЗ Дол/шт.": parse_float(row.get("КЗ Дол/шт.", 0)) if row.get("КЗ Дол/шт.") and row.get("КЗ Дол/шт.").strip() else None,
                         "Різн.КЗ Дол/кг": parse_float(row.get("Різн.КЗ Дол/кг", 0)) if row.get("Різн.КЗ Дол/кг") and row.get("Різн.КЗ Дол/кг").strip() else None,
                         "Різ.КЗ Дол/шт": parse_float(row.get("Різ.КЗ Дол/шт", 0)) if row.get("Різ.КЗ Дол/шт") and row.get("Різ.КЗ Дол/шт").strip() else None,
@@ -194,7 +213,6 @@ async def index_csv_data(file_path, expected_headers, buffer):
                         "пільгова": parse_float(row.get("пільгова", None)) if row.get("пільгова") else None,
                         "повна": row.get("повна", "") if row.get("повна") and row.get("повна").strip() else None
                     }
-
                     await conn.execute("""
                         INSERT INTO customs_data (
                             "Час оформлення", "Назва ПМО", "Тип", "Номер МД", "Дата", "Відправник", "ЕДРПОУ", "Одержувач", "№",
