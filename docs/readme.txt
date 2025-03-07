@@ -200,16 +200,16 @@ To completely clean up all containers, images, volumes and orphaned containers:
    ```
    .
    ├── apiserver/
-   │   ├── app.py
-   │   ├── Dockerfile
-   │   └── requirements.txt
-   ├── ingestion/
-   │   └── import_to_opensearch_pg.py
-   ├── init/
-   │   └── init.sql
-   ├── data/
-   │   └── customs_data.json
-   └── docker-compose.yml
+│   ├── app.py
+│   ├── Dockerfile
+│   └── requirements.txt
+├── index_pg_os.py
+│   
+├── init/
+│   └── init.sql
+├── data/
+│   └── vexel.csv
+└── docker-compose.yml
    ```
 2. Створіть файл `.env` у корені проекту (якщо його немає) із такими змінними:
    ```plaintext

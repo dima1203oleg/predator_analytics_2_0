@@ -368,6 +368,7 @@ def chat():
                 })
 
         # Fetch relevant documents from OpenSearch
+        logger.info("Fetching documents from OpenSearch")
         docs = vectorstore.similarity_search(query, k=limit, offset=offset)
 
         # Fetch SQL results from PostgreSQL
@@ -381,22 +382,23 @@ def chat():
                     LIMIT $2 OFFSET $3
                 """, f"%{query}%", limit, offset)
 
+        logger.info("Fetching SQL results")
         sql_results = asyncio.run(fetch_results())
 
         # Combine and truncate context
-        context = "\n".join(doc.page_content for doc in docs) + "\nSQL Results:\n" + "\n".join(str(row) for row in sql_results)
-        truncated_context = context[:MAX_CONTEXT_LENGTH] if len(context) > MAX_CONTEXT_LENGTH else context
+context = "\n".join(doc.page_content for doc in docs) + "\nSQL Results:\n" + "\n".join(str(row) for row in sql_results)
+truncated_context = context[:MAX_CONTEXT_LENGTH] if len(context) > MAX_CONTEXT_LENGTH else context
 
-        # Generate response
-        llm = Ollama(model=model, base_url=OLLAMA_HOST)
-        qa_chain = RetrievalQA.from_chain_type(
-            llm=llm,
-            retriever=vectorstore.as_retriever(),
-            return_source_documents=True,
-            chain_type_kwargs={"prompt": prompt}
-        )
-        response = qa_chain({"query": query, "context": truncated_context})
-        answer = response["result"]
+# Generate response
+llm = Ollama(model=model, base_url=OLLAMA_HOST)
+qa_chain = RetrievalQA.from_chain_type(
+    llm=llm,
+    retriever=vectorstore.as_retriever(),
+    return_source_documents=True,
+    chain_type_kwargs={"prompt": prompt}
+)
+response = qa_chain({"query": query, "context": truncated_context})
+answer = response["result"]
 
         if stream:
             def generate():
