@@ -134,11 +134,11 @@ async def index_csv_data(file_path, expected_headers, buffer):
                             return datetime.strptime(f"1970-01-01 {value}", "%Y-%м-%d %H:%М:%S")
                         except ValueError:
                             try:
-                                return datetime.strptime(f"1970-01-01 {value}", "%Y-%м-%d %H:%М:%S.%f")
+                                return datetime.strptime(f"1970-01-01 {value}", "%Y-%м-%д %H:%М:%С.%f")
                             except ValueError:
                                 try:
                                     value = value.replace("М", "M")
-                                    return datetime.strptime(value, "%Y-%м-%d %H:%М:%С.%f")
+                                    return datetime.strptime(value, "%Y-%м-%д %H:%М:%С.%f")
                                 except ValueError:
                                     logger.error(f"Invalid date format for value '{value}'")
                                     return default
@@ -356,6 +356,39 @@ def get_tags():
             ]
         }), mimetype='application/json'), 200
 
+def is_json_string(text):
+    """Проверяет, является ли текст JSON-строкой."""
+    text = text.strip()
+    if text.startswith('{') and text.endswith('}'):
+        try:
+            json.loads(text)
+            return True
+        except json.JSONDecodeError:
+            pass
+    return False
+
+def format_json_response(json_text):
+    """Форматирует JSON-ответ в читаемый текст."""
+    try:
+        parsed_json = json.loads(json_text)
+        if "tags" in parsed_json:
+            tags = ", ".join(parsed_json.get("tags", []))
+            subtopics = ", ".join(parsed_json.get("subtopics", []))
+            return f"Категории: {tags}\nПодкатегории: {subtopics}"
+        else:
+            # Используем pretty print для других JSON структур
+            return json.dumps(parsed_json, indent=2, ensure_ascii=False)
+    except json.JSONDecodeError:
+        return json_text  # Возвращаем исходный текст, если не удалось распарсить
+
+@app.after_request
+def after_request(response):
+    """Добавляет CORS заголовки ко всем ответам."""
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
+
 @app.route('/api/chat', methods=['POST'])
 def chat():
     try:
@@ -381,13 +414,11 @@ def chat():
                 return Response(cached, mimetype='application/x-ndjson')
             else:
                 try:
-                    # Для не-потоковых ответов нужно правильно обработать кешированный ответ
                     response_data = json.loads(cached)
                     logger.debug(f"Returning cached response: {json.dumps(response_data)}")
                     return jsonify(response_data)
                 except Exception as e:
                     logger.error(f"Error processing cached response: {e}")
-                    # Если возникла ошибка при обработке кэша, продолжаем как если бы кэша не было
         
         # Получение документов из OpenSearch
         docs = vectorstore.similarity_search(query, k=limit, offset=offset)
@@ -423,12 +454,19 @@ def chat():
         answer = response["result"]
         logger.debug(f"Generated answer: {answer}")
         
+        # Проверяем, является ли ответ JSON-строкой и форматируем его
+        if is_json_string(answer):
+            formatted_answer = format_json_response(answer)
+            logger.debug(f"Formatted JSON response: {formatted_answer}")
+        else:
+            formatted_answer = answer
+        
         if stream:
             def generate():
                 chat_id = f"chat-{uuid.uuid4()}"
                 created_time = int(time.time())
                 
-                # Отправляем начальный чанк с ролью (важно для OpenAI-совместимого API)
+                # Отправляем начальный чанк с ролью
                 initial_chunk = {
                     "id": chat_id,
                     "object": "chat.completion.chunk",
@@ -442,10 +480,13 @@ def chat():
                 }
                 yield json.dumps(initial_chunk) + "\n"
                 
-                # Разбиваем ответ на токены (здесь используем слова для простоты)
-                words = answer.split()
+                # Разбиваем ответ на части
+                # Используем более крупные части для уменьшения задержек и проблем с разбивкой UTF-8 символов
+                chunk_size = 15  # слов в одном чанке
+                words = formatted_answer.split()
+                chunks = [' '.join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
                 
-                for i, word in enumerate(words):
+                for chunk_text in chunks:
                     chunk = {
                         "id": chat_id,
                         "object": "chat.completion.chunk",
@@ -453,7 +494,7 @@ def chat():
                         "model": model,
                         "choices": [{
                             "index": 0,
-                            "delta": {"content": word + " "},
+                            "delta": {"content": chunk_text + " "},
                             "finish_reason": None
                         }]
                     }
@@ -473,16 +514,16 @@ def chat():
                 }
                 yield json.dumps(final_chunk) + "\n"
             
-            # Собираем полный ответ для кэширования
+            # Создаем и собираем ответы для кэширования
             response_generator = generate()
             response_chunks = list(response_generator)
             full_response = "".join(response_chunks)
             
-            # Сохраняем ndjson в кеше, чтобы он мог быть возвращен непосредственно
+            # Сохраняем в кэш
             redis_client.setex(cache_key, 3600, full_response)
             logger.debug(f"Cached stream response for key: {cache_key}")
             
-            # Возвращаем клиенту поток чанков
+            # Возвращаем полностью сформированный поток чанков
             return Response((chunk for chunk in response_chunks), mimetype='application/x-ndjson')
         else:
             # Обычный (не потоковый) ответ
@@ -495,13 +536,13 @@ def chat():
                     "index": 0,
                     "message": {
                         "role": "assistant", 
-                        "content": answer
+                        "content": formatted_answer
                     },
                     "finish_reason": "stop"
                 }]
             }
             
-            # Сохранить в кэше как JSON объект, а не строку
+            # Сохранить в кэше
             redis_client.setex(cache_key, 3600, json.dumps(response_data))
             logger.debug(f"Cached non-stream response for key: {cache_key}")
             logger.debug(f"Returning response: {json.dumps(response_data)}")
